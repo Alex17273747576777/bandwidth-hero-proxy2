@@ -4,7 +4,7 @@ const sharp = require("sharp");
 function compress(imagePath, useWebp, grayscale, quality, originalSize) {
   let format = useWebp ? "webp" : "jpeg";
 
-  return sharp(imagePath)
+  return sharp(imagePath, { limitInputPixels: 40000000, sequentialRead: true })
     .grayscale(grayscale)
     .toFormat(format, { quality, progressive: true, optimizeScans: true })
     .toBuffer({ resolveWithObject: true })

@@ -18,7 +18,7 @@ It downloads original image and transforms it with [Sharp](https://github.com/lo
 
 You need to deploy the functions to Netlify:
 
-[![Deploy](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/himshim/bandwidth-hero-proxy2)
+[![Deploy](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/Alex17273747576777/bandwidth-hero-proxy22)
 
 Then, in the **Data Compression Service** in Bandwidth Hero extension, add `https://your-netlify-domain.netlify.app/api/index`, and you are good to go.
 
@@ -29,3 +29,13 @@ DigitalOcean also provides an
 [easy way](https://www.digitalocean.com/products/one-click-apps/node-js/) to setup a server ready to
 host Node.js apps.
 -->
+## Security configuration (2026-11-10)
+
+The proxy now fails closed until both deployment variables are configured:
+
+- `PROXY_TOKEN`: a new secret configured in the deployment platform. Clients must send `Authorization: Bearer <token>`. Never put it in a URL or repository.
+- `ALLOWED_HOSTS`: comma-separated, exact image-source hostnames. HTTPS on port 443 only; wildcards are not supported.
+
+Private/reserved DNS destinations (including mapped IPv6), redirects, non-image responses and credential forwarding are blocked. Responses are capped at 10 MiB, decoded images at 40 million pixels, and upstream requests time out after 10 seconds. These restrictions intentionally change compatibility with unauthenticated clients and redirecting sources. Set up compatible clients before enabling the service.
+
+Use Node 22 or newer and npm. Direct dependencies are pinned; GitHub Actions generates and tests the npm lockfile. No deployment settings or deploy keys were changed by this source-code update.

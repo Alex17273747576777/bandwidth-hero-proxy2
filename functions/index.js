@@ -1,63 +1,57 @@
-const pick = require("../util/pick"),
-  fetch = require("node-fetch"),
-  shouldCompress = require("../util/shouldCompress"),
-  compress = require("../util/compress"),
-  DEFAULT_QUALITY = 40;
-exports.handler = async (e, t) => {
-  let { url: r } = e.queryStringParameters,
-    { jpeg: s, bw: o, l: a } = e.queryStringParameters;
-  if (!r)
-    return { statusCode: 200, body: "Bandwidth Hero Data Compression Service" };
+const fetch = require("node-fetch");
+const https = require("node:https");
+const crypto = require("node:crypto");
+const shouldCompress = require("../util/shouldCompress");
+const compress = require("../util/compress");
+const { publicLookup, allowedUrl } = require("../util/networkPolicy");
+const MAX_BYTES = 10 * 1024 * 1024;
+
+exports.handler = async (event = {}) => {
+  const query = event.queryStringParameters || {};
+  if (!query.url) return { statusCode: 200, body: "Bandwidth Hero Data Compression Service" };
+  const token = process.env.PROXY_TOKEN;
+  const allowedHosts = new Set((process.env.ALLOWED_HOSTS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean));
+  const reply = (statusCode, body) => ({ statusCode, body, headers: { "cache-control": "no-store" } });
+  if (!token || !allowedHosts.size) return reply(503, "Proxy requires PROXY_TOKEN and ALLOWED_HOSTS configuration");
+  const headers = Object.fromEntries(Object.entries(event.headers || {}).map(([k, v]) => [k.toLowerCase(), v]));
+  const digest = value => crypto.createHash("sha256").update(value).digest();
+  if (!crypto.timingSafeEqual(digest(String(headers.authorization || "")), digest("Bearer " + token))) {
+    return reply(401, "Unauthorized");
+  }
+  let target;
+  try { target = allowedUrl(query.url, allowedHosts); }
+  catch { return reply(400, "Destination not allowed"); }
+  const useWebp = !query.jpeg;
+  const grayscale = query.bw != 0;
+  const quality = Math.max(1, Math.min(100, Number.parseInt(query.l, 10) || 40));
+  const agent = new https.Agent({ lookup: publicLookup, keepAlive: false });
   try {
-    r = JSON.parse(r);
-  } catch {}
-  Array.isArray(r) && (r = r.join("&url=")),
-    (r = r.replace(/http:\/\/1\.1\.\d\.\d\/bmi\/(https?:\/\/)?/i, "http://"));
-  let d = !s,
-    n = 0 != o,
-    i = parseInt(a, 10) || 40;
-  try {
-    let h = {},
-      { data: c, type: l } = await fetch(r, {
-        headers: {
-          ...pick(e.headers, ["cookie", "dnt", "referer"]),
-          "user-agent": "Bandwidth-Hero Compressor",
-          "x-forwarded-for": e.headers["x-forwarded-for"] || e.ip,
-          via: "1.1 bandwidth-hero",
-        },
-      }).then(async (e) =>
-        e.ok
-          ? ((h = e.headers),
-            {
-              data: await e.buffer(),
-              type: e.headers.get("content-type") || "",
-            })
-          : { statusCode: e.status || 302 },
-      ),
-      p = c.length;
-    if (!shouldCompress(l, p, d))
-      return (
-        console.log("Bypassing... Size: ", c.length),
-        {
-          statusCode: 200,
-          body: c.toString("base64"),
-          isBase64Encoded: !0,
-          headers: { "content-encoding": "identity", ...h },
-        }
-      );
-    {
-      let { err: u, output: y, headers: g } = await compress(c, d, n, i, p);
-      if (u) throw (console.log("Conversion failed: ", r), u);
-      console.log(`From ${p}, Saved: ${(p - y.length) / p}%`);
-      let $ = y.toString("base64");
-      return {
-        statusCode: 200,
-        body: $,
-        isBase64Encoded: !0,
-        headers: { "content-encoding": "identity", ...h, ...g },
-      };
+    const response = await fetch(target.href, {
+      redirect: "manual", timeout: 10000, size: MAX_BYTES, agent,
+      headers: { "user-agent": "Bandwidth-Hero Compressor", accept: "image/*" },
+    });
+    // No seguir redirecciones: el destino siguiente aún no está autorizado.
+    if (!response.ok) {
+      if (response.body && response.body.destroy) response.body.destroy();
+      return reply(502, "Upstream request failed");
     }
-  } catch (f) {
-    return console.error(f), { statusCode: 500, body: f.message || "" };
+    const type = response.headers.get("content-type") || "";
+    if (!/^image\//i.test(type)) {
+      if (response.body && response.body.destroy) response.body.destroy();
+      return reply(415, "Upstream response is not an image");
+    }
+    const data = await response.buffer();
+    if (!shouldCompress(type, data.length, useWebp)) {
+      return { statusCode: 200, body: data.toString("base64"), isBase64Encoded: true,
+        headers: { "content-type": type, "cache-control": "no-store" } };
+    }
+    const result = await compress(data, useWebp, grayscale, quality, data.length);
+    if (result.err) return reply(502, "Image conversion failed");
+    return { statusCode: 200, body: result.output.toString("base64"), isBase64Encoded: true,
+      headers: { ...Object.fromEntries(Object.entries(result.headers).map(([k, v]) => [k, String(v)])), "cache-control": "no-store" } };
+  } catch {
+    return reply(502, "Upstream request or image processing failed");
+  } finally {
+    agent.destroy();
   }
 };

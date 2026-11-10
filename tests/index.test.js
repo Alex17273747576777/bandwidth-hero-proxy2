@@ -1,13 +1,18 @@
+jest.mock("node-fetch", () => jest.fn());
+jest.mock("../util/compress", () => jest.fn());
+const fetch = require("node-fetch");
 const { handler } = require("../functions/index");
-const { test, expect } = require("@jest/globals");
-
-test("handler returns correct response when no url query parameter is provided", async () => {
-  const event = {
-    queryStringParameters: {},
-  };
-
-  const response = await handler(event);
-
-  expect(response.statusCode).toBe(200);
-  expect(response.body).toBe("Bandwidth Hero Data Compression Service");
-});
+const { publicLookup } = require("../util/networkPolicy");
+const dns = require("node:dns");
+const event = (url = "https://images.example.org/a.jpg") => ({ queryStringParameters: { url }, headers: { authorization: "Bearer test-only" } });
+beforeEach(() => { jest.clearAllMocks(); process.env.PROXY_TOKEN = "test-only"; process.env.ALLOWED_HOSTS = "images.example.org"; });
+afterEach(() => { jest.restoreAllMocks(); });
+test("health accepts null query and headers", async () => { expect((await handler({ queryStringParameters: null })).statusCode).toBe(200); });
+test("unconfigured service is closed", async () => { delete process.env.PROXY_TOKEN; expect((await handler(event())).statusCode).toBe(503); expect(fetch).not.toHaveBeenCalled(); });
+test("authentication is required", async () => { const e = event(); e.headers = {}; expect((await handler(e)).statusCode).toBe(401); expect(fetch).not.toHaveBeenCalled(); });
+test.each(["http://images.example.org/a", "https://127.0.0.1/a", "https://images.example.org.evil/a", "https://user:pass@images.example.org/a", "https://images.example.org:8443/a"])("rejects %s", async url => { expect((await handler(event(url))).statusCode).toBe(400); expect(fetch).not.toHaveBeenCalled(); });
+test.each([302, 404, 500])("upstream %s is not success and never accesses missing data", async status => { fetch.mockResolvedValue({ ok: false, status }); expect((await handler(event())).statusCode).toBe(502); });
+test("does not forward credentials or follow redirects", async () => { fetch.mockResolvedValue({ ok: false, status: 302 }); const e = event(); e.headers.cookie = "private=secret"; await handler(e); const options = fetch.mock.calls[0][1]; expect(options.redirect).toBe("manual"); expect(options.headers.cookie).toBeUndefined(); expect(options.headers.authorization).toBeUndefined(); expect(options.timeout).toBe(10000); expect(options.size).toBe(10485760); });
+test("rejects non-images", async () => { fetch.mockResolvedValue({ ok: true, headers: { get: () => "text/html" } }); expect((await handler(event())).statusCode).toBe(415); });
+test.each(["127.0.0.1", "10.0.0.1", "169.254.169.254", "100.64.0.1", "::1", "fc00::1", "::ffff:127.0.0.1"])("DNS blocks %s", address => new Promise(resolve => { jest.spyOn(dns, "lookup").mockImplementation((h, o, cb) => cb(null, [{ address, family: address.includes(":") ? 6 : 4 }])); publicLookup("images.example.org", {}, error => { expect(error).toBeInstanceOf(Error); resolve(); }); }));
+test("DNS permits public addresses", () => new Promise(resolve => { jest.spyOn(dns, "lookup").mockImplementation((h, o, cb) => cb(null, [{ address: "8.8.8.8", family: 4 }])); publicLookup("images.example.org", { all: true }, (error, addresses) => { expect(error).toBeNull(); expect(addresses[0].address).toBe("8.8.8.8"); resolve(); }); }));
