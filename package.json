@@ -8,7 +8,7 @@
     "test": "jest tests/index.test.js"
   },
   "dependencies": {
-    "node-fetch": "2.7.0",
+    "node-fetch": "3.3.2",
     "sharp": "0.35.5",
     "ipaddr.js": "2.5.0"
   },
