@@ -16,3 +16,7 @@ test("does not forward credentials or follow redirects", async () => { fetch.moc
 test("rejects non-images", async () => { fetch.mockResolvedValue({ ok: true, headers: { get: () => "text/html" } }); expect((await handler(event())).statusCode).toBe(415); });
 test.each(["127.0.0.1", "10.0.0.1", "169.254.169.254", "100.64.0.1", "::1", "fc00::1", "::ffff:127.0.0.1"])("DNS blocks %s", address => new Promise(resolve => { jest.spyOn(dns, "lookup").mockImplementation((h, o, cb) => cb(null, [{ address, family: address.includes(":") ? 6 : 4 }])); publicLookup("images.example.org", {}, error => { expect(error).toBeInstanceOf(Error); resolve(); }); }));
 test("DNS permits public addresses", () => new Promise(resolve => { jest.spyOn(dns, "lookup").mockImplementation((h, o, cb) => cb(null, [{ address: "8.8.8.8", family: 4 }])); publicLookup("images.example.org", { all: true }, (error, addresses) => { expect(error).toBeNull(); expect(addresses[0].address).toBe("8.8.8.8"); resolve(); }); }));
+test("node-fetch real module exports a callable function in CommonJS", () => {
+  const realFetch = jest.requireActual("node-fetch");
+  expect(typeof realFetch).toBe("function");
+});
